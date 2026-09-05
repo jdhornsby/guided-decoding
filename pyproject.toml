@@ -1,0 +1,21 @@
+[project]
+name = "guided-decoding"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=2.5.2",
+    "torch>=2.14.0",
+    "transformers>=5.16.1",
+]
+
+[project.scripts]
+guided-decoding = "guided_decoding.run:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = []
