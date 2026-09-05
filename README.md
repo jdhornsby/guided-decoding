@@ -39,3 +39,30 @@ jq -c '{step, token_str, guided, allowed_count}' traces/<run-id>.jsonl
 
 `allowed_count` is how many tokens the guide allowed at that step: small
 while it's forcing the string, full vocab once it lets go.
+
+## Render a figure
+
+```
+uv run guided-decoding-viz traces/<run-id>.jsonl -o out.png
+```
+
+Renders a static PNG: a token ribbon, the per-step allow-set (shaded by
+relative probability), and the emitted token's log-probability under the
+unconstrained model. Only reads the trace file — never touches the model.
+
+- `--start N` / `--end N`: slice the trace by file position (not `step`
+  value), Python slice semantics, before rendering. Useful since a full run
+  can exceed the 60-step render limit.
+- `--topk K`: how many allow-set cells to show per step (default 5, capped
+  at what was logged).
+- `--title TEXT`: override the derived heading.
+
+Known limitations:
+
+- Allow-set shading is softmax over the **shown** top-k, not the full
+  allow-set, so it overstates probability when `+N` is large.
+- The grey italic row above the allow-set is only the unconstrained top-1;
+  if the emitted token isn't in the logged top-k, its rank still appears in
+  the peak label but it can't be placed among the alternatives.
+- Wide allow-sets collapse to a `+N` count — legible only through that count
+  and the cost curve, not individually.

@@ -1,7 +1,6 @@
 """Writes one JSONL line per decode step, for `jq`-driven inspection."""
 
 import json
-import math
 from pathlib import Path
 
 import numpy as np
@@ -10,13 +9,19 @@ import numpy as np
 class Tracer:
     """Records each step's raw and biased logits to traces/<run_id>.jsonl."""
 
-    def __init__(self, tokenizer, run_id: str, out_dir: str = "traces"):
-        path = Path(out_dir) / f"{run_id}.jsonl"
+    def __init__(self, tokenizer, run_id: str, path: str | None = None, out_dir: str = "traces"):
+        path = Path(path) if path else Path(out_dir) / f"{run_id}.jsonl"
         path.parent.mkdir(parents=True, exist_ok=True)
         self._tokenizer = tokenizer
         self._file = open(path, "w")
 
+    def meta(self, record: dict) -> None:
+        """Writes the {"kind": "meta", ...} record; must be called before any record()."""
+        self._file.write(json.dumps({"kind": "meta", **record}) + "\n")
+        self._file.flush()
+
     def record(self, step: int, raw: np.ndarray, biased: np.ndarray, token: int, guided: bool):
+        allowed = int(np.isfinite(biased).sum())
         line = {
             "step": step,
             "token": token,
@@ -24,9 +29,9 @@ class Tracer:
             "guided": guided,
             "chosen_rank_raw": self._rank(raw, token),
             "chosen_logprob_raw": self._logprob(raw, token),
-            "allowed_count": int(np.isfinite(biased).sum()),
-            "top_k_raw": self._top_k(raw),
-            "top_k_biased": self._top_k(biased),
+            "allowed_count": allowed,
+            "top_k_raw": self._top_k(raw, k=5),
+            "top_k_biased": self._top_k(biased, k=min(allowed, 10)),
             "entropy_raw": self._entropy(raw),
             "entropy_biased": self._entropy(biased),
         }
@@ -36,11 +41,12 @@ class Tracer:
     def close(self) -> None:
         self._file.close()
 
-    def _top_k(self, logits: np.ndarray, k: int = 5) -> list[list]:
-        k = min(k, len(logits))
-        top = np.argpartition(logits, -k)[-k:]
+    def _top_k(self, logits: np.ndarray, k: int) -> list[list]:
+        finite = np.flatnonzero(np.isfinite(logits))
+        k = min(k, len(finite))
+        top = finite[np.argpartition(logits[finite], -k)[-k:]] if k else finite[:0]
         top = top[np.argsort(logits[top])[::-1]]
-        return [[self._tokenizer.decode([i]), _json_safe(logits[i])] for i in top]
+        return [[self._tokenizer.decode([i]), float(logits[i])] for i in top]
 
     def _entropy(self, logits: np.ndarray) -> float:
         shifted = logits - np.max(logits)
@@ -55,7 +61,3 @@ class Tracer:
         shifted = logits - np.max(logits)
         log_probs = shifted - np.log(np.exp(shifted).sum())
         return float(log_probs[token])
-
-
-def _json_safe(x: float) -> float | None:
-    return float(x) if math.isfinite(x) else None

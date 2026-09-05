@@ -43,6 +43,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=Config.seed)
     parser.add_argument("--max-tokens", type=int, default=Config.max_tokens, dest="max_tokens")
     parser.add_argument("--run-id", default="", dest="run_id")
+    parser.add_argument("--trace", default=None, dest="trace_path", help="output path; defaults to traces/<run_id>.jsonl")
     return parser.parse_args()
 
 
@@ -101,7 +102,20 @@ def main() -> None:
         [{"role": "user", "content": args.prompt}], add_generation_prompt=True
     )["input_ids"]
 
-    tracer = Tracer(tokenizer, config.run_id)
+    tracer = Tracer(tokenizer, config.run_id, path=args.trace_path)
+    tracer.meta({
+        "run_id": config.run_id,
+        "model": config.model_id,
+        "prompt": args.prompt,
+        "guide": repr(guide),
+        "seed": config.seed,
+        "temperature": config.temperature,
+        "top_p": config.top_p,
+        "max_tokens": config.max_tokens,
+        "device": config.device,
+        "dtype": config.dtype,
+        "vocab_size": len(vocab.token_bytes),
+    })
     try:
         ids = generate(model_forward, tokenizer, guide, prompt_ids, config.max_tokens, sampler, tracer)
     finally:

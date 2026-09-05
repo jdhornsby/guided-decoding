@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "matplotlib>=3.10.0",
     "numpy>=2.5.2",
     "torch>=2.14.0",
     "transformers>=5.16.1",
@@ -12,6 +13,7 @@ dependencies = [
 
 [project.scripts]
 guided-decoding = "guided_decoding.run:main"
+guided-decoding-viz = "guided_decoding.viz:main"
 
 [build-system]
 requires = ["hatchling"]

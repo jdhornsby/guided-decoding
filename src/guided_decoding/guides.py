@@ -55,3 +55,6 @@ class LiteralGuide:
 
     def finished(self, state: int) -> bool:
         return state == len(self._target)
+
+    def __repr__(self) -> str:
+        return f"LiteralGuide({self._target.decode()!r})"
