@@ -18,23 +18,26 @@ uv run guided-decoding --prompt "You must respond with a kind comment" --force "
 
 ## Chess
 
-`ChessGuide` constrains each move to a legal SAN move for the current position. Two chat models take turns, each playing from its own perspective.
-
-
-```
-# unguided
-uv run guided-decoding-chess --model HuggingFaceTB/SmolLM2-135M-Instruct --mode unguided
-
-# guided
-uv run guided-decoding-chess --model HuggingFaceTB/SmolLM2-135M-Instruct --mode guided
-uv run guided-decoding-chess --model HuggingFaceTB/SmolLM2-360M-Instruct --mode guided
-
-# biggest vs smallest, guided
-uv run guided-decoding-chess --white Qwen/Qwen2.5-1.5B-Instruct --black HuggingFaceTB/SmolLM2-135M-Instruct --mode guided
-```
-
-## Render a trace
+`ChessGuide` constrains each move to a legal SAN move for the current position. Two chat models
+take turns, each playing from its own perspective. `--prompt` selects how the position is shown
+to the model: `san`, `ascii`, `fen`, `pgn_full`, `pgn_windowed` (default).
 
 ```
-uv run guided-decoding-viz traces/<run-id>.jsonl -o traces/<run-id>.png
+# mode: guided, unguided
+uv run guided-decoding-chess --mode guided
+uv run guided-decoding-chess --mode unguided
+
+# model
+uv run guided-decoding-chess --model HuggingFaceTB/SmolLM2-135M-Instruct
+uv run guided-decoding-chess --model HuggingFaceTB/SmolLM2-360M-Instruct
+uv run guided-decoding-chess --model Qwen/Qwen2.5-1.5B-Instruct
+uv run guided-decoding-chess --model Qwen/Qwen2.5-3B-Instruct
+uv run guided-decoding-chess --model Qwen/Qwen2.5-7B-Instruct --dtype float16
+
+# prompt: san, ascii, fen, pgn_full, pgn_windowed
+uv run guided-decoding-chess --prompt san
+uv run guided-decoding-chess --prompt ascii
+uv run guided-decoding-chess --prompt fen
+uv run guided-decoding-chess --prompt pgn_full
+uv run guided-decoding-chess --prompt pgn_windowed
 ```
