@@ -1,0 +1,330 @@
+"""Play a chess game between two chat models, guided or unguided."""
+
+import argparse
+import os
+import re
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Callable
+
+os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+
+import chess
+import chess.pgn
+import chess.svg
+import numpy as np
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+from .guides import ChessGuide
+from .loop import generate
+from .run import load_pretrained, make_model_forward
+from .trace import Tracer
+from .vocab import Vocab
+
+THINK_END = "</think>"
+MAX_MOVE_TOKENS = 16
+MAX_THINK_TOKENS = 2048
+HISTORY_MOVES = 10
+
+
+# Prompts
+
+Prompt = Callable[[chess.Board, list[str], str], list[dict]]
+
+SYSTEM_SAN = (
+    "You are playing a game of chess. You receive the opponent's moves one at a time in "
+    "standard algebraic notation (SAN). Always reply with only your next move in SAN - for "
+    "example 'e4', 'Nf3', 'O-O', or 'exd5' - and nothing else."
+)
+
+
+def san(board: chess.Board, history: list[str], colour: str) -> list[dict]:
+    messages = [{"role": "system", "content": SYSTEM_SAN}]
+    if not history and colour == "white":
+        messages.append({"role": "user", "content": "You are White. Play your first move."})
+    own = 0 if colour == "white" else 1
+    for i, move in enumerate(history):
+        role = "assistant" if i % 2 == own else "user"
+        messages.append({"role": role, "content": move})
+    return messages
+
+
+SYSTEM_ASCII = (
+    "You are playing a game of chess. You are shown the current board as an 8x8 grid, "
+    "White's back rank at the bottom. Uppercase letters are White's pieces, lowercase are "
+    "Black's (K Q R B N P), '.' is empty. Reply with only your next move in standard "
+    "algebraic notation (SAN) - for example 'e4', 'Nf3', 'O-O', or 'exd5' - and nothing else."
+)
+
+
+def ascii_board(board: chess.Board, history: list[str], colour: str) -> list[dict]:
+    turn = "White" if board.turn == chess.WHITE else "Black"
+    content = f"{board}\n\n{turn} to move."
+    return [{"role": "system", "content": SYSTEM_ASCII}, {"role": "user", "content": content}]
+
+
+SYSTEM_FEN = (
+    "You are playing a game of chess. You are shown the current position in FEN "
+    "notation: piece placement by rank from 8 down to 1, ranks separated by '/', "
+    "uppercase letters are White's pieces, lowercase are Black's (K Q R B N P), and "
+    "digits are consecutive empty squares. Reply with only your next move in standard "
+    "algebraic notation (SAN) - for example 'e4', 'Nf3', 'O-O', or 'exd5' - and nothing else."
+)
+
+
+def fen(board: chess.Board, history: list[str], colour: str) -> list[dict]:
+    return [{"role": "system", "content": SYSTEM_FEN}, {"role": "user", "content": board.fen()}]
+
+
+SYSTEM_PGN_FULL = (
+    "You are playing a game of chess. You are shown the game so far in PGN movetext "
+    "notation, e.g. '9. f3 e5 10.' means it is now White's 10th move. Reply with only "
+    "your next move in standard algebraic notation (SAN) - for example 'e4', 'Nf3', "
+    "'O-O', or 'exd5' - and nothing else."
+)
+
+SYSTEM_PGN_WINDOWED = (
+    "You are playing a game of chess. You are shown the game so far in PGN movetext "
+    "notation, e.g. '9. f3 e5 10.' means it is now White's 10th move. If the game has "
+    "more moves than are shown, a '[SetUp \"1\"]' / '[FEN \"...\"]' header gives the "
+    "starting position for the moves shown; otherwise the moves start from the normal "
+    "starting position. Reply with only your next move in standard algebraic notation "
+    "(SAN) - for example 'e4', 'Nf3', 'O-O', or 'exd5' - and nothing else."
+)
+
+
+def movetext(anchor: chess.Board, moves: list[str], board: chess.Board) -> str:
+    tokens = []
+    n = anchor.fullmove_number
+    i = 0
+    if moves and anchor.turn == chess.BLACK:
+        tokens.append(f"{n}... {moves[0]}")
+        i, n = 1, n + 1
+    while i < len(moves):
+        pair = moves[i:i + 2]
+        tokens.append(f"{n}. {' '.join(pair)}")
+        n += len(pair) // 2
+        i += len(pair)
+    if board.turn == chess.WHITE:  # bare trailing number cues White; Black's turn is implicit
+        tokens.append(f"{n}.")
+    return " ".join(tokens)
+
+
+def pgn_full(board: chess.Board, history: list[str], colour: str) -> list[dict]:
+    content = movetext(chess.Board(), history, board)
+    return [{"role": "system", "content": SYSTEM_PGN_FULL}, {"role": "user", "content": content}]
+
+
+def pgn_windowed(board: chess.Board, history: list[str], colour: str) -> list[dict]:
+    cut = max(0, len(history) - HISTORY_MOVES * 2)
+    anchor = chess.Board()
+    for move in history[:cut]:
+        anchor.push_san(move)
+    header = f'[SetUp "1"]\n[FEN "{anchor.fen()}"]\n\n' if cut else ""
+    content = header + movetext(anchor, history[cut:], board)
+    return [{"role": "system", "content": SYSTEM_PGN_WINDOWED}, {"role": "user", "content": content}]
+
+
+PROMPTS: dict[str, Prompt] = {
+    "san": san, "ascii": ascii_board, "fen": fen, "pgn_full": pgn_full, "pgn_windowed": pgn_windowed,
+}
+
+
+@dataclass
+class Player:
+    model: object
+    tokenizer: object
+    vocab: Vocab
+    rng: object
+    tracer: Tracer
+    model_id: str
+    colour: str
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--model", default="HuggingFaceTB/SmolLM2-135M-Instruct",
+                        help="model for both players (self-play)")
+    parser.add_argument("--white", default=None, dest="white_id", help="override the white model")
+    parser.add_argument("--black", default=None, dest="black_id", help="override the black model")
+    parser.add_argument("--white-seed", type=int, default=0, dest="white_seed")
+    parser.add_argument("--black-seed", type=int, default=1, dest="black_seed")
+    parser.add_argument("--prompt", choices=list(PROMPTS), default="pgn_windowed")
+    parser.add_argument("--mode", choices=["guided", "unguided"], default="guided")
+    parser.add_argument("--max-retries", type=int, default=5, dest="max_retries",
+                        help="unguided only: illegal-move resamples before a forfeit")
+    parser.add_argument("--temperature", type=float, default=0.5,
+                        help="0.0 takes the top token, so --white-seed/--black-seed have no effect")
+    parser.add_argument("--top-p", type=float, default=1.0, dest="top_p")
+    parser.add_argument("--device", default="mps")
+    parser.add_argument("--dtype", default="float32", choices=["float32", "float16"])
+    parser.add_argument("--max-plies", type=int, default=200, dest="max_plies")
+    parser.add_argument("--show-thinking", action="store_true", dest="show_thinking",
+                        help="print each move's reasoning (reasoning models only)")
+    parser.add_argument("--run-id", default="", dest="run_id")
+    args = parser.parse_args()
+    args.white_id = args.white_id or args.model
+    args.black_id = args.black_id or args.model
+    return args
+
+
+def load_model(model_id: str, device: str, dtype: torch.dtype):
+    tokenizer = load_pretrained(AutoTokenizer, model_id)
+    model = load_pretrained(AutoModelForCausalLM, model_id, dtype=dtype)
+    model.to(device)
+    model.eval()
+    return tokenizer, model
+
+
+def make_player(model, tokenizer, model_id: str, seed: int, colour: str,
+                args: argparse.Namespace, run_id: str) -> Player:
+    rng = np.random.default_rng(seed)
+    vocab = Vocab(tokenizer, model.config.vocab_size)
+    tracer = Tracer(tokenizer, run_id, path=f"traces/{run_id}-{colour}.jsonl")
+    tracer.meta({
+        "run_id": run_id,
+        "model": model_id,
+        "seed": seed,
+        "colour": colour,
+        "prompt": args.prompt,
+        "mode": args.mode,
+        "max_retries": args.max_retries,
+        "temperature": args.temperature,
+        "top_p": args.top_p,
+        "device": args.device,
+        "dtype": args.dtype,
+        "vocab_size": len(vocab.token_bytes),
+    })
+    return Player(model, tokenizer, vocab, rng, tracer, model_id, colour)
+
+
+def split_reply(tokenizer, ids: list[int], prompt_len: int, think_end: int | None) -> tuple[str, str]:
+    """Split a generation into (thinking, answer); thinking is '' for non-reasoning models."""
+    reply = ids[prompt_len:]
+    if think_end is None or think_end not in reply:
+        return "", tokenizer.decode(reply, skip_special_tokens=True)
+    split = reply.index(think_end)
+    thinking = tokenizer.decode(reply[:split], skip_special_tokens=True).strip()
+    answer = tokenizer.decode(reply[split + 1:], skip_special_tokens=True)
+    return thinking, answer
+
+
+def parse_move(text: str) -> str:
+    t = re.sub(r"^\d+\.+\s*", "", text.strip().strip('"').lstrip())
+    return t.split()[0].rstrip(".,!?") if t.split() else ""
+
+
+def get_move(player: Player, board: chess.Board, history: list[str], prompt: Prompt,
+             args: argparse.Namespace) -> tuple[str | None, int, str]:
+    """Propose moves until one is legal or retries run out. Returns
+    (legal_move | None, retries_used, last_attempt)."""
+    think_end = player.tokenizer.get_added_vocab().get(THINK_END)
+    if think_end is None:
+        max_tokens, max_think = MAX_MOVE_TOKENS, None
+    else:
+        max_tokens, max_think = MAX_THINK_TOKENS + MAX_MOVE_TOKENS, MAX_THINK_TOKENS
+
+    base = prompt(board, history, player.colour)
+    
+    guide = ChessGuide(player.vocab, board) if args.mode == "guided" else None
+
+    scratch: list[dict] = []
+    move = ""
+    for retries in range(args.max_retries + 1):
+        messages = base + scratch
+        text = player.tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
+        prompt_ids = player.tokenizer(text)["input_ids"]
+
+        forward = make_model_forward(player.model, args.device)
+        ids = generate(forward, player.tokenizer, guide, prompt_ids, max_tokens,
+                       args.temperature, args.top_p, player.rng, player.tracer, think_end, max_think)
+        thinking, answer = split_reply(player.tokenizer, ids, len(prompt_ids), think_end)
+        if args.show_thinking and thinking:
+            print(f"    {player.colour} thinking: {thinking}")
+        move = parse_move(answer)
+
+        try:
+            if move:
+                board.parse_san(move)
+                return move, retries, move
+        except (chess.IllegalMoveError, chess.InvalidMoveError, chess.AmbiguousMoveError):
+            pass
+        scratch += [
+            {"role": "assistant", "content": move or "?"},
+            {"role": "user", "content": f"'{move}' is not a legal move. Reply with a different legal move in SAN."},
+        ]
+    return None, args.max_retries, move
+
+
+def render(board: chess.Board, path: Path) -> None:
+    last = board.move_stack[-1] if board.move_stack else None
+    path.write_text(chess.svg.board(board, lastmove=last))
+
+
+def play(white: Player, black: Player, args: argparse.Namespace, run_id: str) -> None:
+    board = chess.Board()
+    frames = Path("traces") / run_id
+    frames.mkdir(parents=True, exist_ok=True)
+    render(board, frames / "000-start.svg")
+
+    prompt = PROMPTS[args.prompt]
+    tag = f"{args.prompt}, {args.mode}, max-retries {args.max_retries}"
+    print(f"Executing game: {white.model_id} vs {black.model_id}  ({tag})")
+
+    forfeit = None
+    history: list[str] = []
+    while not board.is_game_over() and board.ply() < args.max_plies:
+        player = white if board.turn == chess.WHITE else black
+        colour = "w" if board.turn == chess.WHITE else "b"
+        number = board.fullmove_number
+
+        move, retries, last = get_move(player, board, history, prompt, args)
+        if move is None:
+            print(f"{number:>3}. {colour}  FAILED after {retries} retries (last: {last!r})")
+            forfeit = colour
+            break
+
+        board.push_san(move)
+        history.append(move)
+        render(board, frames / f"{board.ply():03d}-{move}.svg")
+        print(f"{number:>3}. {colour}  {move}" + (f"   ({retries} retries)" if retries else ""))
+
+    game = chess.pgn.Game.from_board(board)
+    game.headers["White"] = white.model_id
+    game.headers["Black"] = black.model_id
+    pgn_path = Path("traces") / f"{run_id}.pgn"
+    pgn_path.write_text(str(game) + "\n")
+
+    if forfeit:
+        print(f"result: {forfeit} forfeited after {board.ply()} legal plies")
+    else:
+        print(f"result: {board.result()} ({board.ply()} plies)")
+    print(f"pgn: {pgn_path}")
+    print(f"frames: {frames}")
+
+
+def main() -> None:
+    args = parse_args()
+    run_id = args.run_id or time.strftime("%Y%m%d-%H%M%S")
+    dtype = getattr(torch, args.dtype)
+
+    white_tokenizer, white_model = load_model(args.white_id, args.device, dtype)
+    if args.black_id == args.white_id:
+        black_tokenizer, black_model = white_tokenizer, white_model
+    else:
+        black_tokenizer, black_model = load_model(args.black_id, args.device, dtype)
+
+    white = make_player(white_model, white_tokenizer, args.white_id, args.white_seed, "white", args, run_id)
+    black = make_player(black_model, black_tokenizer, args.black_id, args.black_seed, "black", args, run_id)
+
+    try:
+        play(white, black, args, run_id)
+    finally:
+        white.tracer.close()
+        black.tracer.close()
+
+
+if __name__ == "__main__":
+    main()

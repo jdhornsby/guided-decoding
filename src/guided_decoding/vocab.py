@@ -17,8 +17,11 @@ class _TrieNode:
 class Vocab:
     """Token ids <-> raw bytes, plus prefix lookups backed by a trie."""
 
-    def __init__(self, tokenizer: PreTrainedTokenizerBase):
-        self.token_bytes: list[bytes | None] = [None] * len(tokenizer)
+    def __init__(self, tokenizer: PreTrainedTokenizerBase, vocab_size: int):
+        # vocab_size is the model's logit width; it exceeds len(tokenizer) when the lm_head
+        # is padded (e.g. Qwen2.5), so the trailing ids stay None.
+        self.token_bytes: list[bytes | None] = [None] * vocab_size
+        self.eos_id = tokenizer.eos_token_id
         special_ids = set(tokenizer.all_special_ids) | set(tokenizer.added_tokens_decoder)
 
         self._root = _TrieNode()

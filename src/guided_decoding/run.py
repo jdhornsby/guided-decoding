@@ -12,7 +12,7 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from .guides import LiteralGuide
-from .loop import generate, greedy, temperature_top_p
+from .loop import generate
 from .trace import Tracer
 from .vocab import Vocab
 
@@ -47,7 +47,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _load_pretrained(cls, model_id: str, **kwargs):
+def load_pretrained(cls, model_id: str, **kwargs):
     """Prefers the local cache or downloads from HF."""
     try:
         return cls.from_pretrained(model_id, local_files_only=True, **kwargs)
@@ -88,15 +88,14 @@ def main() -> None:
     torch.manual_seed(config.seed)
     rng = np.random.default_rng(config.seed)
 
-    tokenizer = _load_pretrained(AutoTokenizer, config.model_id)
-    model = _load_pretrained(AutoModelForCausalLM, config.model_id, dtype=getattr(torch, config.dtype))
+    tokenizer = load_pretrained(AutoTokenizer, config.model_id)
+    model = load_pretrained(AutoModelForCausalLM, config.model_id, dtype=getattr(torch, config.dtype))
     model.to(config.device)
     model.eval()
 
-    vocab = Vocab(tokenizer)
+    vocab = Vocab(tokenizer, model.config.vocab_size)
     guide = LiteralGuide(vocab, args.force)
     model_forward = make_model_forward(model, config.device)
-    sampler = greedy if config.temperature == 0.0 else temperature_top_p(config.temperature, config.top_p, rng)
 
     prompt_ids = tokenizer.apply_chat_template(
         [{"role": "user", "content": args.prompt}], add_generation_prompt=True
@@ -117,7 +116,8 @@ def main() -> None:
         "vocab_size": len(vocab.token_bytes),
     })
     try:
-        ids = generate(model_forward, tokenizer, guide, prompt_ids, config.max_tokens, sampler, tracer)
+        ids = generate(model_forward, tokenizer, guide, prompt_ids, config.max_tokens,
+                       config.temperature, config.top_p, rng, tracer)
     finally:
         tracer.close()
 
