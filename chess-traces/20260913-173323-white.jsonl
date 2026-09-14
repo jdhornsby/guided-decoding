@@ -1,0 +1,1 @@
+{"kind": "meta", "run_id": "20260913-173323", "model": "HuggingFaceTB/SmolLM2-135M-Instruct", "seed": 0, "colour": "white", "style": "pgn", "mode": "guided", "max_retries": 5, "temperature": 0.5, "top_p": 1.0, "device": "mps", "dtype": "float32", "vocab_size": 49152}

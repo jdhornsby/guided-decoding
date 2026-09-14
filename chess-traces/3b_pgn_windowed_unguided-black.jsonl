@@ -1,0 +1,1 @@
+{"kind": "meta", "run_id": "3b_pgn_windowed_unguided", "model": "Qwen/Qwen2.5-3B-Instruct", "seed": 1, "colour": "black", "style": "pgn_windowed", "mode": "unguided", "max_retries": 5, "temperature": 0.5, "top_p": 1.0, "device": "mps", "dtype": "float16", "vocab_size": 151936}

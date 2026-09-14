@@ -1,0 +1,9 @@
+[Event "?"]
+[Site "?"]
+[Date "????.??.??"]
+[Round "?"]
+[White "HuggingFaceTB/SmolLM2-360M-Instruct"]
+[Black "HuggingFaceTB/SmolLM2-360M-Instruct"]
+[Result "*"]
+
+1. e4 e5 2. Nf3 Qh4 3. Qe2 Qh5 4. Qd3 Qh4 5. Qd5 Qh5 6. Qe6+ Ne7 7. Qf5 Nd5 8. exd5 e4 9. Qf6 e3 10. Qe5+ Qxe5 11. Nd4 e2 12. Nf3 Qe7 13. Nc3 exf1=Q+ 14. Kxf1 Qe5 15. Nd4 Qf5 16. Nd1 Qf6 17. Nc3 Qf5 18. Nf3 Nc6 19. Nd4 Nd8 20. Nf3 Nc6 21. Nd4 Qf6 22. Ncb5 Nd8 23. Kg1 Nc6 24. Kf1 Qf5 25. Nc3 Qf6 26. Kg1 Qf5 27. Kf1 Nd8 28. Nc6 Rb8 29. Nb1 Nxc6 30. Nc3 Nd8 *

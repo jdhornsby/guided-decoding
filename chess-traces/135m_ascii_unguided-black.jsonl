@@ -1,0 +1,1 @@
+{"kind": "meta", "run_id": "135m_ascii_unguided", "model": "HuggingFaceTB/SmolLM2-135M-Instruct", "seed": 1, "colour": "black", "style": "ascii", "mode": "unguided", "max_retries": 5, "temperature": 0.5, "top_p": 1.0, "device": "mps", "dtype": "float16", "vocab_size": 49152}
