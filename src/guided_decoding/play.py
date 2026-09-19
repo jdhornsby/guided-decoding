@@ -80,18 +80,21 @@ def fen(board: chess.Board, history: list[str], colour: str) -> list[dict]:
 
 SYSTEM_PGN_FULL = (
     "You are playing a game of chess. You are shown the game so far in PGN movetext "
-    "notation, e.g. '9. f3 e5 10.' means it is now White's 10th move. Reply with only "
-    "your next move in standard algebraic notation (SAN) - for example 'e4', 'Nf3', "
-    "'O-O', or 'exd5' - and nothing else."
+    "notation - this is not an example, it is the actual game; a bare trailing move "
+    "number with nothing after it means no moves have been played yet and you are to "
+    "play first. Reply with only your next move in standard algebraic notation (SAN) - "
+    "for example 'e4', 'Nf3', 'O-O', or 'exd5' - and nothing else."
 )
 
 SYSTEM_PGN_WINDOWED = (
     "You are playing a game of chess. You are shown the game so far in PGN movetext "
-    "notation, e.g. '9. f3 e5 10.' means it is now White's 10th move. If the game has "
-    "more moves than are shown, a '[SetUp \"1\"]' / '[FEN \"...\"]' header gives the "
-    "starting position for the moves shown; otherwise the moves start from the normal "
-    "starting position. Reply with only your next move in standard algebraic notation "
-    "(SAN) - for example 'e4', 'Nf3', 'O-O', or 'exd5' - and nothing else."
+    "notation - this is not an example, it is the actual game; a bare trailing move "
+    "number with nothing after it means no moves have been played yet and you are to "
+    "play first. If the game has more moves than are shown, a '[SetUp \"1\"]' / "
+    "'[FEN \"...\"]' header gives the starting position for the moves shown; otherwise "
+    "the moves start from the normal starting position. Reply with only your next move "
+    "in standard algebraic notation (SAN) - for example 'e4', 'Nf3', 'O-O', or 'exd5' - "
+    "and nothing else."
 )
 
 
