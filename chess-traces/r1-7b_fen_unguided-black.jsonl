@@ -1,0 +1,1 @@
+{"kind": "meta", "run_id": "r1-7b_fen_unguided", "model": "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B", "seed": 1, "colour": "black", "prompt": "fen", "mode": "unguided", "max_retries": 5, "temperature": 0.5, "top_p": 1.0, "device": "cuda", "dtype": "float32", "quant": "nf4", "max_think_tokens": 2048, "vocab_size": 152064}

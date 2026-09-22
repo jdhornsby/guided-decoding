@@ -1,0 +1,9 @@
+[Event "?"]
+[Site "?"]
+[Date "????.??.??"]
+[Round "?"]
+[White "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"]
+[Black "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"]
+[Result "0-1"]
+
+1. e4 e6 2. e5 Nf6 3. Nc3 Be7 4. Nce2 d5 5. Nf3 O-O 6. exf6 e5 7. Nf4 Nc6 8. Nxe5 Bd6 9. Nf3 Be6 10. Ng5 Nd4 11. Nf3 Nf5 12. a3 Ng3 13. a4 Nf5 14. a5 c5 15. a6 d4 16. Nh4 Nxh4 17. Nxe6 Nf3+ 18. gxf3 Bxh2 19. Qe2 Qe7 20. axb7 d3 21. Nf4 dxe2 22. Nxe2 Be5 23. b3 a5 24. Nf4 a4 25. Nh3 a3 26. Be2 a2 27. Nf4 Rad8 28. b4 Bd6 29. Ng6 Be5 30. Nf4 Qe8 31. Rf1 Kh8 32. Ng6+ hxg6 33. b5 Kh7 34. f4 Qe7 35. Rg1 Qe6 36. Rg3 Rg8 37. d3 c4 38. b6 Rgf8 39. Rg1 c3 40. Rg3 Rg8 41. Ba3 Rgf8 42. b8=Q Qe7 43. Qxe5 Qd6 44. Qe4 gxf6 45. Qd5 Qe5 46. Qe6 Qe4 47. Qe5 Qe3 48. Qd6 Rg8 49. Qd5 Qe5 50. d4 Qd6 51. Qf3 Qe5 52. Qe4 Qf5 53. Qd5 g5 54. O-O-O a1=Q# 0-1

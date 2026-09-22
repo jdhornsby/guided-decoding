@@ -12,17 +12,12 @@ class DeadEnd(Exception):
 
 def generate(model, tokenizer, guide, prompt_ids, max_tokens, temperature, top_p, rng, tracer,
              think_end=None, max_think=None):
-    """Runs the decode loop; `model` is ids -> (vocab,) float32 logits, real or fake.
-    `guide` may be None to decode without one. Sampling is temperature/top_p; temperature
-    0.0 takes the top token. While the model is thinking (before it emits `think_end`) the
-    guide is disengaged and those steps are untraced; if thinking runs past `max_think`
-    tokens it is cut off by forcing the `think_end` token."""
+    """Runs the decode loop."""
     ids = list(prompt_ids)
     guiding = guide is not None
     thinking = think_end is not None
     thought = 0
     think_ids: list[int] = []
-    think_start = 0
 
     for step in range(max_tokens):
         raw = model(ids)
@@ -45,15 +40,13 @@ def generate(model, tokenizer, guide, prompt_ids, max_tokens, temperature, top_p
         if thinking:
             thought += 1
             if token == think_end:
-                tracer.think(think_start, think_ids, truncated=False)
+                tracer.think(think_ids, truncated=False)
                 thinking = False
             else:
-                if not think_ids:
-                    think_start = step
                 think_ids.append(token)
                 if max_think is not None and thought > max_think:
                     ids.append(think_end)  # out of budget: force the model to stop thinking
-                    tracer.think(think_start, think_ids, truncated=True)
+                    tracer.think(think_ids, truncated=True)
                     thinking = False
         elif guiding:
             guide.advance(token)

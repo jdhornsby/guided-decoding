@@ -19,7 +19,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from .guides import ChessGuide
 from .loop import generate
-from .run import load_pretrained, make_model_forward
+from .models import load_model as load_model_weights, load_pretrained, make_model_forward
 from .trace import Tracer
 from .vocab import Vocab
 
@@ -79,22 +79,21 @@ def fen(board: chess.Board, history: list[str], colour: str) -> list[dict]:
 
 
 SYSTEM_PGN_FULL = (
-    "You are playing a game of chess. You are shown the game so far in PGN movetext "
-    "notation - this is not an example, it is the actual game; a bare trailing move "
-    "number with nothing after it means no moves have been played yet and you are to "
-    "play first. Reply with only your next move in standard algebraic notation (SAN) - "
-    "for example 'e4', 'Nf3', 'O-O', or 'exd5' - and nothing else."
+    "You are playing a game of chess. You are shown the actual game so far in PGN "
+    "movetext notation. A bare trailing move number with nothing after it means the "
+    "game hasn't started yet and you play first. Reply with only your next move in "
+    "standard algebraic notation (SAN) - for example 'e4', 'Nf3', 'O-O', or 'exd5' - "
+    "and nothing else."
 )
 
 SYSTEM_PGN_WINDOWED = (
-    "You are playing a game of chess. You are shown the game so far in PGN movetext "
-    "notation - this is not an example, it is the actual game; a bare trailing move "
-    "number with nothing after it means no moves have been played yet and you are to "
-    "play first. If the game has more moves than are shown, a '[SetUp \"1\"]' / "
-    "'[FEN \"...\"]' header gives the starting position for the moves shown; otherwise "
-    "the moves start from the normal starting position. Reply with only your next move "
-    "in standard algebraic notation (SAN) - for example 'e4', 'Nf3', 'O-O', or 'exd5' - "
-    "and nothing else."
+    "You are playing a game of chess. You are shown the actual game so far in PGN "
+    "movetext notation. A bare trailing move number with nothing after it means the "
+    "game hasn't started yet and you play first. If the game has more moves than are "
+    "shown, a '[SetUp \"1\"]' / '[FEN \"...\"]' header gives the starting position for "
+    "the moves shown; otherwise the moves start from the normal starting position. "
+    "Reply with only your next move in standard algebraic notation (SAN) - for example "
+    "'e4', 'Nf3', 'O-O', or 'exd5' - and nothing else."
 )
 
 
@@ -116,11 +115,17 @@ def movetext(anchor: chess.Board, moves: list[str], board: chess.Board) -> str:
 
 
 def pgn_full(board: chess.Board, history: list[str], colour: str) -> list[dict]:
-    content = movetext(chess.Board(), history, board)
+    if not history and colour == "white":
+        content = "You are White. Play your first move."
+    else:
+        content = movetext(chess.Board(), history, board)
     return [{"role": "system", "content": SYSTEM_PGN_FULL}, {"role": "user", "content": content}]
 
 
 def pgn_windowed(board: chess.Board, history: list[str], colour: str) -> list[dict]:
+    if not history and colour == "white":
+        content = "You are White. Play your first move."
+        return [{"role": "system", "content": SYSTEM_PGN_WINDOWED}, {"role": "user", "content": content}]
     cut = max(0, len(history) - HISTORY_MOVES * 2)
     anchor = chess.Board()
     for move in history[:cut]:
@@ -162,8 +167,12 @@ def parse_args() -> argparse.Namespace:
                         help="0.0 takes the top token, so --white-seed/--black-seed have no effect")
     parser.add_argument("--top-p", type=float, default=1.0, dest="top_p")
     parser.add_argument("--device", default="mps")
-    parser.add_argument("--dtype", default="float32", choices=["float32", "float16"])
+    parser.add_argument("--dtype", default="float32", choices=["float32", "float16", "bfloat16"])
+    parser.add_argument("--quant", default="none", choices=["none", "fp4", "nf4", "fp8"],
+                        help="fp4/nf4: bitsandbytes 4-bit; fp8: torchao weight-only (memory, not speed, on Ampere)")
     parser.add_argument("--max-plies", type=int, default=200, dest="max_plies")
+    parser.add_argument("--max-think-tokens", type=int, default=MAX_THINK_TOKENS, dest="max_think_tokens",
+                        help="reasoning models only: thinking is cut off past this many tokens")
     parser.add_argument("--show-thinking", action="store_true", dest="show_thinking",
                         help="print each move's reasoning (reasoning models only)")
     parser.add_argument("--run-id", default="", dest="run_id")
@@ -173,11 +182,9 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-def load_model(model_id: str, device: str, dtype: torch.dtype):
+def load_model(model_id: str, device: str, dtype: torch.dtype, quant: str = "none"):
     tokenizer = load_pretrained(AutoTokenizer, model_id)
-    model = load_pretrained(AutoModelForCausalLM, model_id, dtype=dtype)
-    model.to(device)
-    model.eval()
+    model = load_model_weights(AutoModelForCausalLM, model_id, device, dtype, quant)
     return tokenizer, model
 
 
@@ -198,6 +205,8 @@ def make_player(model, tokenizer, model_id: str, seed: int, colour: str,
         "top_p": args.top_p,
         "device": args.device,
         "dtype": args.dtype,
+        "quant": args.quant,
+        "max_think_tokens": args.max_think_tokens,
         "vocab_size": len(vocab.token_bytes),
     })
     return Player(model, tokenizer, vocab, rng, tracer, model_id, colour)
@@ -227,7 +236,7 @@ def get_move(player: Player, board: chess.Board, history: list[str], prompt: Pro
     if think_end is None:
         max_tokens, max_think = MAX_MOVE_TOKENS, None
     else:
-        max_tokens, max_think = MAX_THINK_TOKENS + MAX_MOVE_TOKENS, MAX_THINK_TOKENS
+        max_tokens, max_think = args.max_think_tokens + MAX_MOVE_TOKENS, args.max_think_tokens
 
     base = prompt(board, history, player.colour)
     
@@ -313,11 +322,11 @@ def main() -> None:
     run_id = args.run_id or time.strftime("%Y%m%d-%H%M%S")
     dtype = getattr(torch, args.dtype)
 
-    white_tokenizer, white_model = load_model(args.white_id, args.device, dtype)
+    white_tokenizer, white_model = load_model(args.white_id, args.device, dtype, args.quant)
     if args.black_id == args.white_id:
         black_tokenizer, black_model = white_tokenizer, white_model
     else:
-        black_tokenizer, black_model = load_model(args.black_id, args.device, dtype)
+        black_tokenizer, black_model = load_model(args.black_id, args.device, dtype, args.quant)
 
     white = make_player(white_model, white_tokenizer, args.white_id, args.white_seed, "white", args, run_id)
     black = make_player(black_model, black_tokenizer, args.black_id, args.black_seed, "black", args, run_id)

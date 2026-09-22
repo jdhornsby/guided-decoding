@@ -38,11 +38,10 @@ class Tracer:
         self._file.write(json.dumps(line) + "\n")
         self._file.flush()
 
-    def think(self, step: int, token_ids: list[int], truncated: bool) -> None:
+    def think(self, token_ids: list[int], truncated: bool) -> None:
         """Records one buffered line for a whole thinking phase, not per token."""
         line = {
             "kind": "think",
-            "step": step,
             "tokens": len(token_ids),
             "truncated": truncated,
             "text": self._tokenizer.decode(token_ids, skip_special_tokens=True).strip(),

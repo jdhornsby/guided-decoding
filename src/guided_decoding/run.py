@@ -13,6 +13,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from .guides import LiteralGuide
 from .loop import generate
+from .models import load_pretrained, make_model_forward
 from .trace import Tracer
 from .vocab import Vocab
 
@@ -45,31 +46,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--run-id", default="", dest="run_id")
     parser.add_argument("--trace", default=None, dest="trace_path", help="output path; defaults to traces/<run_id>.jsonl")
     return parser.parse_args()
-
-
-def load_pretrained(cls, model_id: str, **kwargs):
-    """Prefers the local cache or downloads from HF."""
-    try:
-        return cls.from_pretrained(model_id, local_files_only=True, **kwargs)
-    except Exception:
-        return cls.from_pretrained(model_id, **kwargs)
-
-
-def make_model_forward(model, device: str):
-    """Wraps a HF causal LM in a KV cache, so each step only forwards the new token."""
-    past = None
-    n_seen = 0
-
-    def forward(ids: list[int]) -> np.ndarray:
-        nonlocal past, n_seen
-        input_ids = torch.tensor([ids[n_seen:]], device=device)
-        with torch.no_grad():
-            out = model(input_ids, past_key_values=past, use_cache=True)
-        past = out.past_key_values
-        n_seen = len(ids)
-        return out.logits[0, -1].float().cpu().numpy()
-
-    return forward
 
 
 def main() -> None:
