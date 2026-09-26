@@ -1,5 +1,7 @@
 """The decode loop, plus the sampling that turns logits into a token."""
 
+from dataclasses import dataclass, field
+
 import numpy as np
 
 
@@ -10,12 +12,21 @@ class DeadEnd(Exception):
         super().__init__(f"{type(guide).__name__} left no allowed tokens at step {step}")
 
 
+@dataclass
+class ThinkConfig:
+    """Controls the thinking phase, if the model has one."""
+    end_token: int
+    max_tokens: int | None = None
+    timeout_nudge_ids: list[int] = field(default_factory=list)  # said before forcing </think> on timeout
+    resume_ids: list[int] = field(default_factory=list)  # said right after </think>, natural or forced
+
+
 def generate(model, tokenizer, guide, prompt_ids, max_tokens, temperature, top_p, rng, tracer,
-             think_end=None, max_think=None):
+             top_k=0, think: ThinkConfig | None = None):
     """Runs the decode loop."""
     ids = list(prompt_ids)
     guiding = guide is not None
-    thinking = think_end is not None
+    thinking = think is not None
     thought = 0
     think_ids: list[int] = []
 
@@ -29,7 +40,7 @@ def generate(model, tokenizer, guide, prompt_ids, max_tokens, temperature, top_p
             if not np.isfinite(logits).any():
                 raise DeadEnd(guide, step)
 
-        token = _sample(logits, temperature, top_p, rng)
+        token = _sample(logits, temperature, top_p, rng, top_k)
         if not thinking:
             tracer.record(step, raw, logits, token, guiding)
 
@@ -39,14 +50,13 @@ def generate(model, tokenizer, guide, prompt_ids, max_tokens, temperature, top_p
 
         if thinking:
             thought += 1
-            if token == think_end:
-                tracer.think(think_ids, truncated=False)
+            if token == think.end_token:
+                _end_thinking(ids, think_ids, think, tracer, truncated=False)
                 thinking = False
             else:
                 think_ids.append(token)
-                if max_think is not None and thought > max_think:
-                    ids.append(think_end)  # out of budget: force the model to stop thinking
-                    tracer.think(think_ids, truncated=True)
+                if think.max_tokens is not None and thought > think.max_tokens:
+                    _end_thinking(ids, think_ids, think, tracer, truncated=True)
                     thinking = False
         elif guiding:
             guide.advance(token)
@@ -55,13 +65,27 @@ def generate(model, tokenizer, guide, prompt_ids, max_tokens, temperature, top_p
     return ids
 
 
-def _sample(logits: np.ndarray, temperature: float, top_p: float, rng: np.random.Generator) -> int:
-    """temperature 0.0 takes the top token; otherwise softmax(logits / temperature) truncated to top_p."""
+def _end_thinking(ids: list[int], think_ids: list[int], think: ThinkConfig, tracer, truncated: bool) -> None:
+    if truncated:
+        ids.extend(think.timeout_nudge_ids)
+        think_ids.extend(think.timeout_nudge_ids)
+        ids.append(think.end_token)
+    ids.extend(think.resume_ids)
+    think_ids.extend(think.resume_ids)
+    tracer.think(think_ids, truncated=truncated)
+
+
+def _sample(logits: np.ndarray, temperature: float, top_p: float, rng: np.random.Generator,
+            top_k: int = 0) -> int:
+    """temperature 0.0 takes the top token; otherwise softmax(logits / temperature), first
+    truncated to top_k candidates (0 disables), then to top_p."""
     if temperature == 0.0:
         return int(np.argmax(logits))
 
     scaled = logits / temperature
     order = np.argsort(scaled)[::-1]
+    if top_k > 0:
+        order = order[:top_k]
     probs = _softmax(scaled[order])
 
     cutoff = np.searchsorted(np.cumsum(probs), top_p) + 1
