@@ -1,0 +1,9 @@
+[Event "?"]
+[Site "?"]
+[Date "????.??.??"]
+[Round "?"]
+[White "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"]
+[Black "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"]
+[Result "1/2-1/2"]
+
+1. e4 Nf6 2. e5 a6 3. e6 Nc6 4. Nf3 Nb4 5. exd7+ Nxd7 6. Nc3 e5 7. Ng5 Nf6 8. Nf3 e4 9. Nxe4 a5 10. Nc3 Nc6 11. a4 Nd5 12. Nxd5 Nb8 13. Rb1 Rg8 14. Nf6+ Ke7 15. Qe2+ Be6 16. Rg1 Nc6 17. Nh4 Nb4 18. Ra1 Qxd2+ 19. Bxd2 Rd8 20. Nf3 Nc6 21. Ng5 Nb8 22. Nf3 h6 23. Nh4 Nc6 24. Rd1 Nb4 25. Nf3 Nc6 26. Nh4 Nb4 27. Nf3 Nc6 28. Nh4 Nb8 29. Nf3 Nc6 30. Nh7 Nb4 31. Nf6 Nc6 32. Nh4 Nb4 33. Nf3 Nc6 1/2-1/2

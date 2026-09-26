@@ -1,0 +1,9 @@
+[Event "?"]
+[Site "?"]
+[Date "????.??.??"]
+[Round "?"]
+[White "Qwen/Qwen3-4B"]
+[Black "Qwen/Qwen3-4B"]
+[Result "1/2-1/2"]
+
+1. e4 Nf6 2. d4 d5 3. Qd3 Nc6 4. Bg5 Nxe4 5. Qe3 Nc5 6. Bc4 Nxd4 7. Qd2 Nc6 8. Nc3 Qd6 9. Qe3 Bd7 10. Nce2 Qe6 11. Nf3 Qe5 12. Nc3 Bc8 13. Nxe5 Bd7 14. Nxd5 Bc8 15. Qe4 Bd7 16. Nf3 Bc8 17. Nc3 Bd7 18. Ng1 Bc8 19. Nf3 Bd7 20. Ng1 Nxe4 21. Nf3 Bc8 22. Nxe4 Bd7 23. Nf6+ Kd8 24. Nxd7 Kc8 25. Nf6 Nd4 26. Ne5 Nc6 27. Nf3 Nd4 28. Nxd4 e5 29. Nc6 e4 30. Nxe4 Bc5 31. Nc3 Bd6 32. Nxa7+ Kd7 33. Nc6 Bc5 34. Nd5 Bd6 35. Nd4 Bc5 36. Nc3 Bd6 37. Nc6 Bc5 38. Nd4 Bd6 39. Nf3 Bc5 40. Nd5 Bd6 41. Nc3 Bc5 42. Nd4 Ke8 43. Nf3 Bd6 44. Nd5 Bc5 45. Nc3 Bd6 46. Ng1 Bc5 47. Nf3 Bd6 48. Nh4 Bc5 49. Ng6 Bd6 50. Nf4 Bc5 51. Nce2 Bd6 52. Nc3 Bc5 53. Nfe2 Bd6 54. Nf4 Bc5 55. Nce2 Bd6 56. Nc3 Bc5 57. Nd3 Bd6 58. Nf4 1/2-1/2

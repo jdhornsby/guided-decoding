@@ -1,0 +1,9 @@
+[Event "?"]
+[Site "?"]
+[Date "????.??.??"]
+[Round "?"]
+[White "Qwen/Qwen3-4B"]
+[Black "Qwen/Qwen3-4B"]
+[Result "*"]
+
+1. e4 d5 2. d4 e5 3. Nf3 c6 4. Bf4 Bc5 5. Ng5 Qa5+ *

@@ -18,8 +18,8 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from .guides import ChessGuide
-from .loop import generate
-from .run import load_pretrained, make_model_forward
+from .loop import ThinkConfig, generate
+from .models import load_model as load_model_weights, load_pretrained, make_model_forward
 from .trace import Tracer
 from .vocab import Vocab
 
@@ -27,6 +27,47 @@ THINK_END = "</think>"
 MAX_MOVE_TOKENS = 16
 MAX_THINK_TOKENS = 2048
 HISTORY_MOVES = 10
+
+# Qwen3's documented thinking-budget fallback, injected before forcing </think> on timeout.
+# https://github.com/QwenLM/Qwen3/blob/main/docs/source/getting_started/thinking_budget.md
+QWEN3_TIMEOUT_NUDGE = (
+    "\n\nConsidering the limited time by the user, I have to give the solution based on the "
+    "thinking directly now."
+)
+
+RESUME_TEXT = "\n\n"  # what every model we've traced reaches for right after </think>
+
+# Qwen's recommended thinking-mode sampling; everything else keeps the harness defaults.
+# https://qwen.readthedocs.io/en/latest/getting_started/quickstart.html
+QWEN3_SAMPLING = (0.6, 0.95, 20)
+DEFAULT_SAMPLING = (0.5, 1.0, 0)
+
+
+def _is_qwen3(model_id: str) -> bool:
+    return "qwen3" in model_id.lower()
+
+
+def build_think_config(tokenizer, model_id: str, max_think_tokens: int) -> ThinkConfig | None:
+    """max_think_tokens is the only general knob; the transition text depends on model family."""
+    think_end = tokenizer.get_added_vocab().get(THINK_END)
+    if think_end is None:
+        return None
+    resume_ids = tokenizer(RESUME_TEXT, add_special_tokens=False)["input_ids"]
+    timeout_nudge_ids = (
+        tokenizer(QWEN3_TIMEOUT_NUDGE, add_special_tokens=False)["input_ids"] if _is_qwen3(model_id) else []
+    )
+    return ThinkConfig(think_end, max_think_tokens, timeout_nudge_ids, resume_ids)
+
+
+def build_sampling(model_id: str, temperature: float | None, top_p: float | None,
+                   top_k: int | None) -> tuple[float, float, int]:
+    """Falls back to model-family defaults for whatever wasn't set on the CLI."""
+    default_temp, default_top_p, default_top_k = QWEN3_SAMPLING if _is_qwen3(model_id) else DEFAULT_SAMPLING
+    return (
+        temperature if temperature is not None else default_temp,
+        top_p if top_p is not None else default_top_p,
+        top_k if top_k is not None else default_top_k,
+    )
 
 
 # Prompts
@@ -79,19 +120,21 @@ def fen(board: chess.Board, history: list[str], colour: str) -> list[dict]:
 
 
 SYSTEM_PGN_FULL = (
-    "You are playing a game of chess. You are shown the game so far in PGN movetext "
-    "notation, e.g. '9. f3 e5 10.' means it is now White's 10th move. Reply with only "
-    "your next move in standard algebraic notation (SAN) - for example 'e4', 'Nf3', "
-    "'O-O', or 'exd5' - and nothing else."
+    "You are playing a game of chess. You are shown the actual game so far in PGN "
+    "movetext notation. A bare trailing move number with nothing after it means the "
+    "game hasn't started yet and you play first. Reply with only your next move in "
+    "standard algebraic notation (SAN) - for example 'e4', 'Nf3', 'O-O', or 'exd5' - "
+    "and nothing else."
 )
 
 SYSTEM_PGN_WINDOWED = (
-    "You are playing a game of chess. You are shown the game so far in PGN movetext "
-    "notation, e.g. '9. f3 e5 10.' means it is now White's 10th move. If the game has "
-    "more moves than are shown, a '[SetUp \"1\"]' / '[FEN \"...\"]' header gives the "
-    "starting position for the moves shown; otherwise the moves start from the normal "
-    "starting position. Reply with only your next move in standard algebraic notation "
-    "(SAN) - for example 'e4', 'Nf3', 'O-O', or 'exd5' - and nothing else."
+    "You are playing a game of chess. You are shown the actual game so far in PGN "
+    "movetext notation. A bare trailing move number with nothing after it means the "
+    "game hasn't started yet and you play first. If the game has more moves than are "
+    "shown, a '[SetUp \"1\"]' / '[FEN \"...\"]' header gives the starting position for "
+    "the moves shown; otherwise the moves start from the normal starting position. "
+    "Reply with only your next move in standard algebraic notation (SAN) - for example "
+    "'e4', 'Nf3', 'O-O', or 'exd5' - and nothing else."
 )
 
 
@@ -113,11 +156,17 @@ def movetext(anchor: chess.Board, moves: list[str], board: chess.Board) -> str:
 
 
 def pgn_full(board: chess.Board, history: list[str], colour: str) -> list[dict]:
-    content = movetext(chess.Board(), history, board)
+    if not history and colour == "white":
+        content = "You are White. Play your first move."
+    else:
+        content = movetext(chess.Board(), history, board)
     return [{"role": "system", "content": SYSTEM_PGN_FULL}, {"role": "user", "content": content}]
 
 
 def pgn_windowed(board: chess.Board, history: list[str], colour: str) -> list[dict]:
+    if not history and colour == "white":
+        content = "You are White. Play your first move."
+        return [{"role": "system", "content": SYSTEM_PGN_WINDOWED}, {"role": "user", "content": content}]
     cut = max(0, len(history) - HISTORY_MOVES * 2)
     anchor = chess.Board()
     for move in history[:cut]:
@@ -141,6 +190,9 @@ class Player:
     tracer: Tracer
     model_id: str
     colour: str
+    temperature: float
+    top_p: float
+    top_k: int
 
 
 def parse_args() -> argparse.Namespace:
@@ -155,12 +207,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mode", choices=["guided", "unguided"], default="guided")
     parser.add_argument("--max-retries", type=int, default=5, dest="max_retries",
                         help="unguided only: illegal-move resamples before a forfeit")
-    parser.add_argument("--temperature", type=float, default=0.5,
-                        help="0.0 takes the top token, so --white-seed/--black-seed have no effect")
-    parser.add_argument("--top-p", type=float, default=1.0, dest="top_p")
+    parser.add_argument("--temperature", type=float, default=None,
+                        help="0.0 takes the top token, so --white-seed/--black-seed have no effect; "
+                        "defaults to the model family's recommended value")
+    parser.add_argument("--top-p", type=float, default=None, dest="top_p")
+    parser.add_argument("--top-k", type=int, default=None, dest="top_k", help="0 disables top-k")
     parser.add_argument("--device", default="mps")
-    parser.add_argument("--dtype", default="float32", choices=["float32", "float16"])
+    parser.add_argument("--dtype", default="float32", choices=["float32", "float16", "bfloat16"])
+    parser.add_argument("--quant", default="none", choices=["none", "fp4", "nf4", "fp8"],
+                        help="fp4/nf4: bitsandbytes 4-bit; fp8: torchao weight-only (memory, not speed, on Ampere)")
     parser.add_argument("--max-plies", type=int, default=200, dest="max_plies")
+    parser.add_argument("--max-think-tokens", type=int, default=MAX_THINK_TOKENS, dest="max_think_tokens",
+                        help="reasoning models only: thinking is cut off past this many tokens")
     parser.add_argument("--show-thinking", action="store_true", dest="show_thinking",
                         help="print each move's reasoning (reasoning models only)")
     parser.add_argument("--run-id", default="", dest="run_id")
@@ -170,11 +228,9 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-def load_model(model_id: str, device: str, dtype: torch.dtype):
+def load_model(model_id: str, device: str, dtype: torch.dtype, quant: str = "none"):
     tokenizer = load_pretrained(AutoTokenizer, model_id)
-    model = load_pretrained(AutoModelForCausalLM, model_id, dtype=dtype)
-    model.to(device)
-    model.eval()
+    model = load_model_weights(AutoModelForCausalLM, model_id, device, dtype, quant)
     return tokenizer, model
 
 
@@ -182,6 +238,7 @@ def make_player(model, tokenizer, model_id: str, seed: int, colour: str,
                 args: argparse.Namespace, run_id: str) -> Player:
     rng = np.random.default_rng(seed)
     vocab = Vocab(tokenizer, model.config.vocab_size)
+    temperature, top_p, top_k = build_sampling(model_id, args.temperature, args.top_p, args.top_k)
     tracer = Tracer(tokenizer, run_id, path=f"traces/{run_id}-{colour}.jsonl")
     tracer.meta({
         "run_id": run_id,
@@ -191,13 +248,16 @@ def make_player(model, tokenizer, model_id: str, seed: int, colour: str,
         "prompt": args.prompt,
         "mode": args.mode,
         "max_retries": args.max_retries,
-        "temperature": args.temperature,
-        "top_p": args.top_p,
+        "temperature": temperature,
+        "top_p": top_p,
+        "top_k": top_k,
         "device": args.device,
         "dtype": args.dtype,
+        "quant": args.quant,
+        "max_think_tokens": args.max_think_tokens,
         "vocab_size": len(vocab.token_bytes),
     })
-    return Player(model, tokenizer, vocab, rng, tracer, model_id, colour)
+    return Player(model, tokenizer, vocab, rng, tracer, model_id, colour, temperature, top_p, top_k)
 
 
 def split_reply(tokenizer, ids: list[int], prompt_len: int, think_end: int | None) -> tuple[str, str]:
@@ -220,11 +280,8 @@ def get_move(player: Player, board: chess.Board, history: list[str], prompt: Pro
              args: argparse.Namespace) -> tuple[str | None, int, str]:
     """Propose moves until one is legal or retries run out. Returns
     (legal_move | None, retries_used, last_attempt)."""
-    think_end = player.tokenizer.get_added_vocab().get(THINK_END)
-    if think_end is None:
-        max_tokens, max_think = MAX_MOVE_TOKENS, None
-    else:
-        max_tokens, max_think = MAX_THINK_TOKENS + MAX_MOVE_TOKENS, MAX_THINK_TOKENS
+    think = build_think_config(player.tokenizer, player.model_id, args.max_think_tokens)
+    max_tokens = (think.max_tokens + MAX_MOVE_TOKENS) if think else MAX_MOVE_TOKENS
 
     base = prompt(board, history, player.colour)
     
@@ -239,7 +296,8 @@ def get_move(player: Player, board: chess.Board, history: list[str], prompt: Pro
 
         forward = make_model_forward(player.model, args.device)
         ids = generate(forward, player.tokenizer, guide, prompt_ids, max_tokens,
-                       args.temperature, args.top_p, player.rng, player.tracer, think_end, max_think)
+                       player.temperature, player.top_p, player.rng, player.tracer, player.top_k, think)
+        think_end = think.end_token if think else None
         thinking, answer = split_reply(player.tokenizer, ids, len(prompt_ids), think_end)
         if args.show_thinking and thinking:
             print(f"    {player.colour} thinking: {thinking}")
@@ -310,11 +368,11 @@ def main() -> None:
     run_id = args.run_id or time.strftime("%Y%m%d-%H%M%S")
     dtype = getattr(torch, args.dtype)
 
-    white_tokenizer, white_model = load_model(args.white_id, args.device, dtype)
+    white_tokenizer, white_model = load_model(args.white_id, args.device, dtype, args.quant)
     if args.black_id == args.white_id:
         black_tokenizer, black_model = white_tokenizer, white_model
     else:
-        black_tokenizer, black_model = load_model(args.black_id, args.device, dtype)
+        black_tokenizer, black_model = load_model(args.black_id, args.device, dtype, args.quant)
 
     white = make_player(white_model, white_tokenizer, args.white_id, args.white_seed, "white", args, run_id)
     black = make_player(black_model, black_tokenizer, args.black_id, args.black_seed, "black", args, run_id)

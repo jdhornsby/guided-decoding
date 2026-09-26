@@ -1,0 +1,1 @@
+{"kind": "meta", "run_id": "qwen3-8b_ascii_unguided_tuned", "model": "Qwen/Qwen3-8B", "seed": 1, "colour": "black", "prompt": "ascii", "mode": "unguided", "max_retries": 5, "temperature": 0.6, "top_p": 0.95, "top_k": 20, "device": "cuda", "dtype": "float32", "quant": "nf4", "max_think_tokens": 2048, "vocab_size": 151936}
