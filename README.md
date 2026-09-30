@@ -34,6 +34,10 @@ uv run guided-decoding-chess --model Qwen/Qwen2.5-1.5B-Instruct
 uv run guided-decoding-chess --model Qwen/Qwen2.5-3B-Instruct
 uv run guided-decoding-chess --model Qwen/Qwen2.5-7B-Instruct --dtype float16
 
+# reasoning models (--quant nf4 for 4-bit; sampling defaults to the family's recommendation)
+uv run guided-decoding-chess --model Qwen/Qwen3-4B --quant nf4
+uv run guided-decoding-chess --model deepseek-ai/DeepSeek-R1-Distill-Qwen-7B --quant nf4 --max-think-tokens 2048 --show-thinking
+
 # prompt: san, ascii, fen, pgn_full, pgn_windowed
 uv run guided-decoding-chess --prompt san
 uv run guided-decoding-chess --prompt ascii
